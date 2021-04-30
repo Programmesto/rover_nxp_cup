@@ -56,6 +56,4 @@ struct _vector {
 	float grad;
 };
 
-roverControl raceTrack(Pixy2 &pixy);
-
 #endif
