@@ -103,7 +103,7 @@ static volatile bool thread_running = false;		/**< daemon status flag */
 
 
 static struct vehicle_status_s status = {};
-static struct actuator_armed_s armed = {};
+static struct actuator_armed_s armed = { armed.au_arm = true };
 
 static struct vehicle_status_flags_s status_flags = {};
 
@@ -297,6 +297,12 @@ extern "C" __EXPORT int commander_main(int argc, char *argv[])
 
 		print_health_flags(status);
 
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "auto-arm")) {
+		armed.au_arm = !armed.au_arm;
+		PX4_INFO("Auto pilot is %s", armed.au_arm ? "Enable" : "Disable");
 		return 0;
 	}
 
@@ -2510,7 +2516,7 @@ Commander::run()
 
 		px4_usleep(COMMANDER_MONITORING_INTERVAL);
 
-		if (!armed.armed && hrt_elapsed_time(&_boot_timestamp) >= 2_s) {
+		if (armed.au_arm && !armed.armed && hrt_elapsed_time(&_boot_timestamp) >= 2_s) {
 			//mavlink_log_critical(&_mavlink_log_pub, "HI");
 			// arm(arm_disarm_reason_t::COMMAND_INTERNAL, false);
 			char armCommand[] = {'a', 'r', 'm', 0};

@@ -46,6 +46,14 @@
 #include <px4_defines.h>
 #include <stdlib.h>
 
+#define PI 3.14159265
+#define MAX_WIDTH_PIXY 315
+#define MAX_HEIGHT_PIXY 207
+
+struct Point{
+	int x, y;
+};
+
 int findVector(Pixy2 &pixy, Vector* left, Vector* right);
 void findAverageVector(Vector* result, Vector* first, Vector* second);
 float lengthVector(Vector* vector);
@@ -53,6 +61,7 @@ float calculateAngle(Vector* vector);
 float calculateDiffAngleVector(double ref, Vector* vector);
 roverControl raceTrack(Pixy2 &pixy);
 void sortVector(Vector* vector);
+Point rayTrace(Point& start, double angle, double step, Pixy2& pixy);
 
 //using namespace matrix;
 
@@ -74,6 +83,8 @@ float turn_angle = 0.7;
 float angle_for_turn = 70.0;
 float max_servo_angle = 0.7;
 int max_counter = 30;
+bool race = false;
+int dark = 50;
 
 int debug = 0;
 
@@ -142,7 +153,7 @@ int race_thread_main(int argc, char **argv)
 		while (1) {
 			safety_sub.copy(&safety);				// request Safety swutch state
 			safety.safety_off = 1;
-			pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
+			// pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
 
 //			switch (safety.safety_off) {
 //			case 0:
@@ -178,13 +189,25 @@ int race_thread_main(int argc, char **argv)
 //				break;
 //			}
 
-			motorControl = raceTrack(pixy);
+			if (race) {
+				pixy.line.getAllFeatures(LINE_VECTOR, wait);
+				motorControl = raceTrack(pixy);
+				pixy.setLamp(true,false);
+			} else {
+				pixy.setLamp(false,false);
+				motorControl = {0.0, 0.0};
+				pixy.setLED(0,0,0);
+				if (debug) {
+					Point start{ MAX_WIDTH_PIXY / 2, MAX_HEIGHT_PIXY };
+					Point point = rayTrace( start, 30.0, 0.5, pixy);
+					PX4_INFO("%d  %d", point.x, point.y);
+				}
+			}
 
 			_control_mode.flag_control_manual_enabled 	= false;
 			_control_mode.flag_control_attitude_enabled 	= true;
 			_control_mode.flag_control_velocity_enabled 	= false;
 			_control_mode.flag_control_position_enabled	= false;
-			pixy.setLamp(true,false);
 
 			roverSteerSpeed(motorControl, _att_sp);		// setting values for speed and steering to attitude setpoints
 
@@ -283,6 +306,11 @@ int nxpcup_main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "dark")) {
+		dark = atoi(argv[2]);
+		return 0;
+	}
+
 //	if (!strcmp(argv[1], "rab")) {
 //		//ref_angle = atof(argv[2]);
 //		return 0;
@@ -305,6 +333,16 @@ int nxpcup_main(int argc, char *argv[])
 
 	if (!strcmp(argv[1], "maxc")) {
 		max_counter = atoi(argv[2]);
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "race-start")) {
+		race = true;
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "race-stop")) {
+		race = false;
 		return 0;
 	}
 
@@ -458,5 +496,38 @@ void sortVector(Vector* vector) {
 		a = vector->m_y0;
 		vector->m_y0 = vector->m_y1;
 		vector->m_y1 = a;
+	}
+}
+
+Point rayTrace(Point& start, double angle, double step, Pixy2& pixy) {
+	if (angle < 90.0) {
+		step *= -1;
+	} else if (angle > 90.0) {
+		angle = 180.0 - angle;
+	} else {
+		//считать по y
+	}
+	int x_full, y_full;
+	double x = 0, y = 0;
+	double tang = tan(angle * PI / 180.0);
+	uint8_t r = 0, g = 0, b = 0;
+	//PX4_INFO("Start:");
+	//PX4_INFO("%f %f %f", step, angle, tang);
+	while (true)
+	{
+		x += step;
+		y = abs(x) * tang;
+		x_full = (int) (start.x + (x + (x < 0 ? -0.5 : 0.5)));
+		y_full = (int) (start.y - (y + (y < 0 ? -0.5 : 0.5)));
+		if (x_full < 0 || y_full < 0 || x_full > MAX_WIDTH_PIXY || y_full > MAX_HEIGHT_PIXY) {
+			//PX4_INFO("Stop");
+			return Point{ x_full, y_full };
+		}
+		pixy.video.getRGB( x_full, y_full, &r, &g, &b );
+		//PX4_INFO("%d  %d  %d", x_full, y_full, (r + g + b));
+		if (r + g + b < dark) {
+			//PX4_INFO("Stop");
+			return Point{ x_full, y_full };
+		}
 	}
 }
