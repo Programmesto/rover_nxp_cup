@@ -47,28 +47,11 @@
 #include <stdlib.h>
 
 #define PI 3.14159265
-#define MAX_WIDTH_PIXY 315
-#define MAX_HEIGHT_PIXY 207
 
-struct Point{
-	int x, y;
-};
-
-int findVector(Pixy2 &pixy, Vector* left, Vector* right);
-void findAverageVector(Vector* result, Vector* first, Vector* second);
-float lengthVector(Vector* vector);
-float calculateAngle(Vector* vector);
-float calculateDiffAngleVector(double ref, Vector* vector);
+double lengthVector(Vector* vector);
+double calculateAngle(Vector* vector);
 roverControl raceTrack(Pixy2 &pixy);
 void sortVector(Vector* vector);
-Point rayTrace(Point& start, double angle, double step, Pixy2& pixy);
-
-//using namespace matrix;
-
-const int NULL_VECTORS = 0;
-const int LEFT_VECTOR = 1;
-const int RIGHT_VECTOR = 2;
-const int LEFT_AND_RIGHT_VECTOR = 3;
 
 static int daemon_task;             /* Handle of deamon task / thread */
 
@@ -76,17 +59,21 @@ bool threadShouldExit = false;
 bool threadIsRunning = false;
 int counter = 0;
 
-float speed = 0.15;
-float steer = 0.0;
-float correction_angle = 0.2;
-float turn_angle = 0.7;
-float angle_for_turn = 70.0;
-float max_servo_angle = 0.7;
-int max_counter = 30;
-bool race = false;
-int dark = 50;
+//скорость при повороте
+float turn_speed = 0.2;
+//скорость на прямой
+float straight_speed = 0.25;
 
-int debug = 0;
+//скорость на которой постоянно ездит машина
+float speed = 0.0;
+
+//последний угол поворота
+float steer = 0.0;
+double angle_for_turn = 45.0;
+double correction_angle = 20;
+double kf_angle = 1.3;
+int max_counter = 1;
+bool race = true;
 
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
@@ -153,55 +140,13 @@ int race_thread_main(int argc, char **argv)
 		while (1) {
 			safety_sub.copy(&safety);				// request Safety swutch state
 			safety.safety_off = 1;
-			// pixy.line.getAllFeatures(LINE_VECTOR, wait);		// get line vectors from pixy
-
-//			switch (safety.safety_off) {
-//			case 0:
-//				// Setting vehicle into the default state
-//				_control_mode.flag_control_manual_enabled	= true;
-//				_control_mode.flag_control_attitude_enabled	= true;
-//				_control_mode.flag_control_velocity_enabled	= true;
-//				_control_mode.flag_control_position_enabled	= true;
-//
-//				pixy.setLED(0,0,0);		// Pixy: reset RGB led
-//				pixy.setLamp(false,false);	// Pixy: reset upper leds
-//				// reset PWM outputs
-//				motorControl.speed = 0.0f;
-//				motorControl.steer = 0.0f;
-//				break;
-//			case 1:
-//				// Setting vehicle to attitude control mode
-//				_control_mode.flag_control_manual_enabled 	= false;
-//				_control_mode.flag_control_attitude_enabled 	= true;
-//				_control_mode.flag_control_velocity_enabled 	= false;
-//				_control_mode.flag_control_position_enabled	= false;
-//
-//				start = true;			// create your own start condition
-//				pixy.setLED(0,0,255);		// Pixy: set RGB led to blue
-//				pixy.setLamp(true,false);	// Pixy: sets upper led
-//
-//				if (start) {
-//					//motorControl = raceTrack(pixy);
-//				} else {
-//					motorControl.speed = speed;
-//					motorControl.steer = steer;
-//				}
-//				break;
-//			}
 
 			if (race) {
 				pixy.line.getAllFeatures(LINE_VECTOR, wait);
 				motorControl = raceTrack(pixy);
-				pixy.setLamp(true,false);
 			} else {
-				pixy.setLamp(false,false);
-				motorControl = {0.0, 0.0};
+				motorControl = {steer, speed};
 				pixy.setLED(0,0,0);
-				if (debug) {
-					Point start{ MAX_WIDTH_PIXY / 2, MAX_HEIGHT_PIXY };
-					Point point = rayTrace( start, 30.0, 0.5, pixy);
-					PX4_INFO("%d  %d", point.x, point.y);
-				}
 			}
 
 			_control_mode.flag_control_manual_enabled 	= false;
@@ -286,63 +231,71 @@ int nxpcup_main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "aft")) {
+		angle_for_turn = (double) atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "cora")) {
+		correction_angle = (double) atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
+	}
+
 	if (!strcmp(argv[1], "speed")) {
-			speed = atof(argv[2]);
-			return 0;
+		speed = atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "tspeed")) {
+		turn_speed = atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
+	}
+
+	if (!strcmp(argv[1], "sspeed")) {
+		straight_speed = atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
 	}
 
 	if (!strcmp(argv[1], "steer")) {
-			steer = atof(argv[2]);
-			return 0;
+		steer = atof(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
 	}
 
-	if (!strcmp(argv[1], "msa")) {
-		max_servo_angle = atof(argv[2]);
+	if (!strcmp(argv[1], "kfa")) {
+		kf_angle = (double) atof(argv[2]);
+		PX4_INFO("done\n");
 		return 0;
 	}
 
 	if (!strcmp(argv[1], "aft")) {
 		angle_for_turn = atof(argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "dark")) {
-		dark = atoi(argv[2]);
-		return 0;
-	}
-
-//	if (!strcmp(argv[1], "rab")) {
-//		//ref_angle = atof(argv[2]);
-//		return 0;
-//	}
-
-	if (!strcmp(argv[1], "debug")) {
-		debug = atoi(argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "corra")) {
-		correction_angle = atof(argv[2]);
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "turna")) {
-		turn_angle = atof(argv[2]);
+		PX4_INFO("done\n");
 		return 0;
 	}
 
 	if (!strcmp(argv[1], "maxc")) {
 		max_counter = atoi(argv[2]);
+		PX4_INFO("done\n");
 		return 0;
 	}
 
 	if (!strcmp(argv[1], "race-start")) {
 		race = true;
+		PX4_INFO("done\n");
 		return 0;
 	}
 
 	if (!strcmp(argv[1], "race-stop")) {
+		speed = 0;
+		steer = 0;
 		race = false;
+		PX4_INFO("done\n");
 		return 0;
 	}
 
@@ -350,142 +303,112 @@ int nxpcup_main(int argc, char *argv[])
 	return 1;
 }
 
-roverControl raceTrack(Pixy2 &pixy)
-{
-	/* insert you algorithm here */
-	Vector left;
-	Vector right;
-	roverControl control{steer, speed};
-	int find = findVector(pixy, &left, &right);
-	float angle = 0;
-	if (find == LEFT_VECTOR || find == RIGHT_VECTOR) {
-		Vector vector = left;
-		if (find == RIGHT_VECTOR) {
-			vector = right;
-		}
-		if (calculateAngle(&vector) > angle_for_turn) {
-			int x = vector.m_x0;
-			if (x < 38) {
-				angle = -correction_angle;
-			} else if (x > 40) {
-				angle = correction_angle;
-			} else {
-				angle = 0;
+#define SCREEN_WIDTH 78
+#define SCREEN_HEIGHT 51
+
+void findLongestVectors(Vector* all_vectors, int all_vectors_count, int vectors_on_sides_count, Vector* result, int* count_result) {
+	float max_left_length = 0, max_right_length = 0;
+	for (int i = 0; i < all_vectors_count; i++) {
+		Vector vector = all_vectors[i];
+		int center = SCREEN_WIDTH / 2;
+		float length = lengthVector(&vector);
+		if (vector.m_x0 <= center) {
+			if (max_left_length < length) {
+				result[0] = vector;
+				max_left_length = length;
 			}
 		} else {
-			angle = (find == RIGHT_VECTOR ? -1 : 1) * turn_angle;
+			if (max_right_length < length) {
+				result[1] = vector;
+				max_right_length = length;
+			}
 		}
-		control.steer = fmin(max_servo_angle, fmax(-max_servo_angle, angle));
-		steer = control.steer;
-		counter = 0;
-	} else if (find == LEFT_AND_RIGHT_VECTOR && (abs(steer) >= turn_angle || counter++ >= max_counter)) {
-		Vector average;
-		findAverageVector(&average, &left, &right);
-		int x = average.m_x0;
-		if (x < 38) {
-			angle = correction_angle;
-		} else if (x > 40) {
-			angle = -correction_angle;
-		} else {
-			angle = 0;
-		}
-		control.steer = fmin(max_servo_angle, fmax(-max_servo_angle, angle));
-		steer = control.steer;
 	}
-	PX4_INFO("%f /n", (double) control.steer);
+	if (all_vectors_count > 0) {
+		if (max_left_length <= 0 || max_right_length <= 0) {
+			*count_result = 1;
+		} else {
+			*count_result = 2;
+		}
+	}
+}
+
+void sum_vectors(Vector* vectors, int count) {
+	Vector result = vectors[0];
+	sortVector(&result);
+	for (int i = 1; i < count; i++) {
+		Vector vector = vectors[i];
+		sortVector(&vector);
+		result.m_x0 += vector.m_x0;
+		result.m_x1 += vector.m_x1;
+		result.m_y0 += vector.m_y0;
+		result.m_y1 += vector.m_y1;
+	}
+	result.m_x0 /= count;
+	result.m_x1 /= count;
+	result.m_y0 /= count;
+	result.m_y1 /= count;
+}
+
+double calculateSteerAngle(Vector& vector, Pixy2& pixy) {
+	return (vector.m_x1 < vector.m_x0 ? -kf_angle : kf_angle) * (90.0 - calculateAngle(&vector));
+}
+
+double calculateSteerAngleForStraight(Vector& vector, int count, Pixy2& pixy) {
+	double angle = (count == 2 ? -1 : 1);
+	int center = SCREEN_WIDTH / 2;
+	if (vector.m_x0 <= center - 1) {
+		angle *= correction_angle;
+	} else if (vector.m_x0 >= center + 1) {
+		angle *= -correction_angle;
+	}
+	return angle;
+}
+
+double calculateSteer(double steerAngle) {
+	return steerAngle / 90.0;
+}
+
+roverControl raceTrack(Pixy2 &pixy) {
+	roverControl control{steer, speed};
+	if (pixy.line.numVectors == 0) {
+		return control;
+	}
+	if (counter >= max_counter) {
+		counter = 0;
+		int count = 2;
+		Vector* vectors = new Vector[count];
+		findLongestVectors(pixy.line.vectors, pixy.line.numVectors, 1, vectors, &count);
+		sum_vectors(vectors, count);
+		Vector result = pixy.line.vectors[0];
+		double steerAngle = calculateSteerAngle(result, pixy);
+		if (abs(steerAngle) >= angle_for_turn && count == 1) {
+			PX4_INFO("TURN: %f   %d", steerAngle, count);
+			speed = turn_speed;
+			steer = calculateSteer(steerAngle);
+		} else {
+			steerAngle = calculateSteerAngleForStraight(result, count, pixy);
+			PX4_INFO("STRAIGHT: %f  %d", steerAngle, count);
+			speed = straight_speed;
+			steer = calculateSteer(steerAngle);
+		}
+		control.steer = steer;
+		control.speed = speed;
+		PX4_INFO("%f", (double) steer);
+		PX4_INFO("");
+	} else {
+		counter++;
+	}
 	return control;
 }
 
-int findVector(Pixy2 &pixy, Vector* left, Vector* right) {
-	int max_length_left = 0;
-	int max_length_right = 0;
-	int find = NULL_VECTORS;
-	for (int i = 0; i < pixy.line.numVectors; i++) {
-		Vector vector = pixy.line.vectors[i];
-		sortVector(&vector);
-		int length = lengthVector(&vector);
-		if (vector.m_x0 == 39) {
-			if (vector.m_x1 > 39 && length > max_length_left) {
-				max_length_left = length;
-				*left = vector;
-				if (find == NULL_VECTORS) {
-					find = LEFT_VECTOR;
-				} else if (find == RIGHT_VECTOR) {
-					find = LEFT_AND_RIGHT_VECTOR;
-				}
-			} else if (vector.m_x1 < 39 && length > max_length_right) {
-				max_length_right = length;
-				*right = vector;
-				if (find == NULL_VECTORS) {
-					find = RIGHT_VECTOR;
-				} else if (find == LEFT_VECTOR) {
-					find = LEFT_AND_RIGHT_VECTOR;
-				}
-			}
-		} else if (vector.m_x0 < 39 && length > max_length_left) {
-			max_length_left = length;
-			*left = vector;
-			if (find == NULL_VECTORS) {
-				find = LEFT_VECTOR;
-			} else if (find == RIGHT_VECTOR) {
-				find = LEFT_AND_RIGHT_VECTOR;
-			}
-		} else if (length > max_length_right) {
-			max_length_right = length;
-			*right = vector;
-			if (find == NULL_VECTORS) {
-				find = RIGHT_VECTOR;
-			} else if (find == LEFT_VECTOR) {
-				find = LEFT_AND_RIGHT_VECTOR;
-			}
-		}
-	}
 
-	if (find == LEFT_AND_RIGHT_VECTOR) {
-		Vector main;
-		Vector second;
-		int local_find;
-		if (left->m_y0 < right->m_y0) {
-			main = *right;
-			second = * left;
-			local_find = RIGHT_VECTOR;
-		} else if (right->m_y0 < left->m_y0) {
-			main = *left;
-			second = * right;
-			local_find = LEFT_VECTOR;
-		} else {
-			return find;
-		}
-		double k = (main.m_y0 - main.m_y1) / (main.m_x0 - main.m_x1);
-		double b = main.m_y1 - k * main.m_x1;
-
-//		double local_y = (second.m_x0 - main.m_x0) * kf;
-//		double y = (int) ((main.m_x0 + local_y + 0.01) * 100) / 100;
-		if ((second.m_x0 * k + b ) > second.m_y0) {
-			main.print();
-			second.print();
-			PX4_INFO("%f %f %f", k, b, second.m_x0 * k + b);
-			return local_find;
-		}
-	}
-
-
-	return find;
-}
-
-void findAverageVector(Vector* result, Vector* first, Vector* second) {
-	result->m_x0 = (first->m_x0 + second->m_x0) / 2;
-	result->m_y0 = (first->m_y0 + second->m_y0) / 2;
-	result->m_x1 = (first->m_x1 + second->m_x1) / 2;
-	result->m_y1 = (first->m_y1 + second->m_y1) / 2;
-}
-
-float lengthVector(Vector* vector) {
+double lengthVector(Vector* vector) {
 	return sqrt(pow(vector->m_x1 - vector->m_x0, 2) + pow(vector->m_y1 - vector->m_y0, 2));
 }
 
-float calculateAngle(Vector* vector) {
-	return abs(asin(((float)vector->m_y1 - vector->m_y0) / lengthVector(vector)) * (180.0 / 3.14159));
+double calculateAngle(Vector* vector) {
+	return abs(asin(((double)vector->m_y1 - vector->m_y0) / lengthVector(vector)) * (180.0 / 3.14159));
 }
 
 void sortVector(Vector* vector) {
@@ -496,38 +419,5 @@ void sortVector(Vector* vector) {
 		a = vector->m_y0;
 		vector->m_y0 = vector->m_y1;
 		vector->m_y1 = a;
-	}
-}
-
-Point rayTrace(Point& start, double angle, double step, Pixy2& pixy) {
-	if (angle < 90.0) {
-		step *= -1;
-	} else if (angle > 90.0) {
-		angle = 180.0 - angle;
-	} else {
-		//считать по y
-	}
-	int x_full, y_full;
-	double x = 0, y = 0;
-	double tang = tan(angle * PI / 180.0);
-	uint8_t r = 0, g = 0, b = 0;
-	//PX4_INFO("Start:");
-	//PX4_INFO("%f %f %f", step, angle, tang);
-	while (true)
-	{
-		x += step;
-		y = abs(x) * tang;
-		x_full = (int) (start.x + (x + (x < 0 ? -0.5 : 0.5)));
-		y_full = (int) (start.y - (y + (y < 0 ? -0.5 : 0.5)));
-		if (x_full < 0 || y_full < 0 || x_full > MAX_WIDTH_PIXY || y_full > MAX_HEIGHT_PIXY) {
-			//PX4_INFO("Stop");
-			return Point{ x_full, y_full };
-		}
-		pixy.video.getRGB( x_full, y_full, &r, &g, &b );
-		//PX4_INFO("%d  %d  %d", x_full, y_full, (r + g + b));
-		if (r + g + b < dark) {
-			//PX4_INFO("Stop");
-			return Point{ x_full, y_full };
-		}
 	}
 }
