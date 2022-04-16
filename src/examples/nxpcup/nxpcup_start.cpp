@@ -48,10 +48,10 @@
 
 #define PI 3.14159265
 
-double lengthVector(Vector* vector);
-double calculateAngle(Vector* vector);
+double lengthVector(Vector& vector);
+double calculateAngle(Vector& vector);
 roverControl raceTrack(Pixy2 &pixy);
-void sortVector(Vector* vector);
+void sortVector(Vector& vector);
 
 static int daemon_task;             /* Handle of deamon task / thread */
 
@@ -60,9 +60,9 @@ bool threadIsRunning = false;
 int counter = 0;
 
 //скорость при повороте
-float turn_speed = 0.2;
+float turn_speed = 0.1;
 //скорость на прямой
-float straight_speed = 0.25;
+float straight_speed = 0.15;
 
 //скорость на которой постоянно ездит машина
 float speed = 0.0;
@@ -74,6 +74,7 @@ double correction_angle = 20;
 double kf_angle = 1.3;
 int max_counter = 1;
 bool race = true;
+int debug = 0;
 
 void roverSteerSpeed(roverControl control, vehicle_attitude_setpoint_s &_att_sp)
 {
@@ -142,6 +143,7 @@ int race_thread_main(int argc, char **argv)
 			safety.safety_off = 1;
 
 			if (race) {
+				pixy.setLamp(true, true);
 				pixy.line.getAllFeatures(LINE_VECTOR, wait);
 				motorControl = raceTrack(pixy);
 			} else {
@@ -285,6 +287,12 @@ int nxpcup_main(int argc, char *argv[])
 		return 0;
 	}
 
+	if (!strcmp(argv[1], "debug")) {
+		debug = atoi(argv[2]);
+		PX4_INFO("done\n");
+		return 0;
+	}
+
 	if (!strcmp(argv[1], "race-start")) {
 		race = true;
 		PX4_INFO("done\n");
@@ -303,42 +311,22 @@ int nxpcup_main(int argc, char *argv[])
 	return 1;
 }
 
-#define SCREEN_WIDTH 78
-#define SCREEN_HEIGHT 51
+int getSide(Vector& vector) {
+	return vector.m_x1 < vector.m_x0 ? -1 : 1;
+}
 
-void findLongestVectors(Vector* all_vectors, int all_vectors_count, int vectors_on_sides_count, Vector* result, int* count_result) {
-	float max_left_length = 0, max_right_length = 0;
-	for (int i = 0; i < all_vectors_count; i++) {
-		Vector vector = all_vectors[i];
-		int center = SCREEN_WIDTH / 2;
-		float length = lengthVector(&vector);
-		if (vector.m_x0 <= center) {
-			if (max_left_length < length) {
-				result[0] = vector;
-				max_left_length = length;
-			}
-		} else {
-			if (max_right_length < length) {
-				result[1] = vector;
-				max_right_length = length;
-			}
-		}
-	}
-	if (all_vectors_count > 0) {
-		if (max_left_length <= 0 || max_right_length <= 0) {
-			*count_result = 1;
-		} else {
-			*count_result = 2;
-		}
-	}
+void setNullVector(Vector& vector) {
+	vector.m_x0 = 148;
+}
+
+bool isNullVector(Vector& vector) {
+	return vector.m_x0 == 148;
 }
 
 void sum_vectors(Vector* vectors, int count) {
 	Vector result = vectors[0];
-	sortVector(&result);
 	for (int i = 1; i < count; i++) {
 		Vector vector = vectors[i];
-		sortVector(&vector);
 		result.m_x0 += vector.m_x0;
 		result.m_x1 += vector.m_x1;
 		result.m_y0 += vector.m_y0;
@@ -348,10 +336,121 @@ void sum_vectors(Vector* vectors, int count) {
 	result.m_x1 /= count;
 	result.m_y0 /= count;
 	result.m_y1 /= count;
+	vectors[0] = result;
+}
+
+#define SCREEN_WIDTH 78
+#define SCREEN_HEIGHT 51
+
+void chooseVector(Vector& top, Vector& down, Vector* output) {
+	if (isNullVector(top)) {
+		output[0] = isNullVector(down) ? top : down;
+	} else {
+		if (!isNullVector(down)) {
+			if (getSide(top) == getSide(down)) {
+				// float lengthFirst = lengthVector(first);
+				// float lengthSecond = lengthVector(second);
+				// return lengthFirst > lengthSecond ? first : second;
+				if (top.m_y0 > down.m_y0) {
+					top.m_y1 = down.m_y1;
+					top.m_x1 = down.m_x1;
+				} else {
+					top.m_y0 = down.m_y0;
+					top.m_x0 = down.m_x0;
+				}
+				output[0] = top;
+			} else {
+				output[0] = down;
+			}
+		} else {
+			output[0] = top;
+		}
+	}
+}
+
+void findLongestVectors(Vector* all_vectors, int all_vectors_count, Vector* result, int* count_result) {
+	for (int i = 0; i < *count_result; i++) {
+		setNullVector(result[i]);
+	}
+	PX4_INFO("start");
+	float max_left_upper_length = 0, max_left_lower_length = 0, max_right_upper_length = 0, max_right_lower_length = 0;
+	for (int i = 0; i < all_vectors_count; i++) {
+		Vector vector = all_vectors[i];
+		sortVector(vector);
+		PX4_INFO("%d  %d  %d  %d", vector.m_x0, vector.m_y0, vector.m_x1, vector.m_y1);
+		int centerW = SCREEN_WIDTH / 2;
+		int centerH = SCREEN_HEIGHT / 2;
+		float length = lengthVector(vector);
+		if (vector.m_x0 <= centerW) {
+			if (vector.m_y0 <= centerH) {
+				if (max_left_upper_length < length) {
+					result[0] = vector;
+					max_left_upper_length = length;
+				}
+			} else {
+				if (max_left_lower_length < length) {
+					result[1] = vector;
+					max_left_lower_length = length;
+				}
+			}
+		} else {
+			if (vector.m_y0 <= centerH) {
+				if (max_right_upper_length < length) {
+					result[2] = vector;
+					max_left_upper_length = length;
+				}
+			} else {
+				if (max_right_lower_length < length) {
+					result[3] = vector;
+					max_left_lower_length = length;
+				}
+			}
+		}
+	}
+	if (debug > 3) {
+		PX4_INFO("");
+		for (int i = 0; i < *count_result; i++) {
+			Vector vector = result[i];
+			if (isNullVector(vector)) {
+				PX4_INFO("null");
+			} else {
+				PX4_INFO("%d  %d  %d  %d", vector.m_x0, vector.m_y0, vector.m_x1, vector.m_y1);
+			}
+		}
+		PX4_INFO("");
+	}
+	Vector* output = new Vector[1];
+	chooseVector(result[0], result[1], output);
+	Vector left = output[0];
+	chooseVector(result[2], result[3], output);
+	Vector right = output[0];
+	delete result;
+	result = new Vector[2];
+	*count_result = 0;
+	int id = 0;
+	if (!isNullVector(left)) {
+		*count_result += 1;
+		result[id++] = left;
+	}
+	if (!isNullVector(right))  {
+		*count_result += 1;
+		result[id] = right;
+	}
+	if (debug > 2) {
+		for (int i = 0; i < *count_result; i++) {
+		Vector vector = result[i];
+		if (isNullVector(vector)) {
+			PX4_INFO("null");
+		} else {
+			PX4_INFO("%d  %d  %d  %d", vector.m_x0, vector.m_y0, vector.m_x1, vector.m_y1);
+		}
+	}
+	PX4_INFO("");
+	}
 }
 
 double calculateSteerAngle(Vector& vector, Pixy2& pixy) {
-	return (vector.m_x1 < vector.m_x0 ? -kf_angle : kf_angle) * (90.0 - calculateAngle(&vector));
+	return getSide(vector) * kf_angle * (90.0 - calculateAngle(vector));
 }
 
 double calculateSteerAngleForStraight(Vector& vector, int count, Pixy2& pixy) {
@@ -361,6 +460,8 @@ double calculateSteerAngleForStraight(Vector& vector, int count, Pixy2& pixy) {
 		angle *= correction_angle;
 	} else if (vector.m_x0 >= center + 1) {
 		angle *= -correction_angle;
+	} else {
+		angle = 0;
 	}
 	return angle;
 }
@@ -376,11 +477,13 @@ roverControl raceTrack(Pixy2 &pixy) {
 	}
 	if (counter >= max_counter) {
 		counter = 0;
-		int count = 2;
+		int count = 4;
 		Vector* vectors = new Vector[count];
-		findLongestVectors(pixy.line.vectors, pixy.line.numVectors, 1, vectors, &count);
-		sum_vectors(vectors, count);
-		Vector result = pixy.line.vectors[0];
+		findLongestVectors(pixy.line.vectors, pixy.line.numVectors, vectors, &count);
+		if (count > 1) {
+			sum_vectors(vectors, count);
+		}
+		Vector result = vectors[0];
 		double steerAngle = calculateSteerAngle(result, pixy);
 		if (abs(steerAngle) >= angle_for_turn && count == 1) {
 			PX4_INFO("TURN: %f   %d", steerAngle, count);
@@ -395,6 +498,9 @@ roverControl raceTrack(Pixy2 &pixy) {
 		control.steer = steer;
 		control.speed = speed;
 		PX4_INFO("%f", (double) steer);
+		PX4_INFO("%d  %d  %d  %d", result.m_x0, result.m_y0, result.m_x1, result.m_y1);
+		//PX4_INFO("");
+		//PX4_INFO("");
 		PX4_INFO("");
 	} else {
 		counter++;
@@ -403,21 +509,21 @@ roverControl raceTrack(Pixy2 &pixy) {
 }
 
 
-double lengthVector(Vector* vector) {
-	return sqrt(pow(vector->m_x1 - vector->m_x0, 2) + pow(vector->m_y1 - vector->m_y0, 2));
+double lengthVector(Vector& vector) {
+	return sqrt(pow(vector.m_x1 - vector.m_x0, 2) + pow(vector.m_y1 - vector.m_y0, 2));
 }
 
-double calculateAngle(Vector* vector) {
-	return abs(asin(((double)vector->m_y1 - vector->m_y0) / lengthVector(vector)) * (180.0 / 3.14159));
+double calculateAngle(Vector& vector) {
+	return abs(asin(((double)vector.m_y1 - vector.m_y0) / lengthVector(vector)) * (180.0 / 3.14159));
 }
 
-void sortVector(Vector* vector) {
-	if (vector->m_y0 < vector->m_y1) {
-		double a = vector->m_x0;
-		vector->m_x0 = vector->m_x1;
-		vector->m_x1 = a;
-		a = vector->m_y0;
-		vector->m_y0 = vector->m_y1;
-		vector->m_y1 = a;
+void sortVector(Vector& vector) {
+	if (vector.m_y0 < vector.m_y1) {
+		double a = vector.m_x0;
+		vector.m_x0 = vector.m_x1;
+		vector.m_x1 = a;
+		a = vector.m_y0;
+		vector.m_y0 = vector.m_y1;
+		vector.m_y1 = a;
 	}
 }
