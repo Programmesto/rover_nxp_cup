@@ -55,7 +55,7 @@ bool threadIsRunning = false;
 int speed_counter = 0;
 
 //скорость при повороте
-float turn_speed = 0.23;
+float turn_speed = 0.2;
 //скорость на прямой
 float max_straight_speed = 0.3;
 
@@ -66,7 +66,7 @@ float speed = 0.0;
 float steer = 0.0;
 float angle_for_turn = 40.0;
 float correction_angle = 20;
-float kf_angle = 1.7;
+float kf_angle = 1.5;
 int max_speed_counter = 30;
 bool race = true;
 int debug = 0;
@@ -378,10 +378,10 @@ int getSide(Vector& vector) {
 
 bool isBadVector(Vector vector) {
 	int side = getSide(vector);
-	if (vector.m_x0 <= HALF_SCREEN_WIDTH && vector.m_x1 <= HALF_SCREEN_WIDTH && side == TO_LEFT) {
+	if (vector.m_x0 <= HALF_SCREEN_WIDTH && side == TO_LEFT) {
 		return true;
 	}
-	if (vector.m_x0 >= HALF_SCREEN_WIDTH && vector.m_x1 >= HALF_SCREEN_WIDTH && side == TO_RIGHT) {
+	if (vector.m_x0 >= HALF_SCREEN_WIDTH && side == TO_RIGHT) {
 		return true;
 	}
 	return false;
@@ -429,8 +429,6 @@ void findLongestVectorsByFourSectors(Vector* all_vectors, int all_vectors_count,
 		result[i] = ExpandVector{};
 	}
 	PX4_INFO("start");
-	int centerW = SCREEN_WIDTH / 2;
-	int centerH = SCREEN_HEIGHT / 2;
 	float max_left_upper_length = 0, max_left_lower_length = 0, max_right_upper_length = 0, max_right_lower_length = 0;
 	PX4_INFO("vectors:  ");
 	for (int i = 0; i < all_vectors_count; i++) {
@@ -438,45 +436,43 @@ void findLongestVectorsByFourSectors(Vector* all_vectors, int all_vectors_count,
 		sortVector(vector);
 		PX4_INFO("%d  %d  %d  %d", vector.m_x0, vector.m_y0, vector.m_x1, vector.m_y1);
 		float length = lengthVector(vector);
-		if (vector.m_x0 <= centerW) {
-			if (vector.m_y0 <= centerH) {
+		if (vector.m_x0 <= HALF_SCREEN_WIDTH) {
+			if (vector.m_y0 <= HALF_SCREEN_HEIGHT) {
 				if (max_left_upper_length < length) {
 					ExpandVector& newVector = result[LEFT_UP];
 					newVector.set(vector);
 					newVector.length = length;
 					newVector.calculateSide();
+					newVector.isBad = isBadVector(vector);
 					max_left_upper_length = length;
 				}
 			} else {
 				ExpandVector& newVector = result[LEFT_DOWN];
-				bool isBad = isBadVector(vector);
-				if ((newVector.isNull || (!isBad && newVector.isBad)) ||
-					(isBad == newVector.isBad && max_left_lower_length < length)) {
+				if (max_left_lower_length < length) {
 					newVector.set(vector);
 					newVector.length = length;
 					newVector.calculateSide();
-					newVector.isBad = isBad;
+					newVector.isBad = isBadVector(vector);
 					max_left_lower_length = length;
 				}
 			}
 		} else {
-			if (vector.m_y0 <= centerH) {
+			if (vector.m_y0 <= HALF_SCREEN_HEIGHT) {
 				if (max_right_upper_length < length) {
 					ExpandVector& newVector = result[RIGHT_UP];
 					newVector.set(vector);
 					newVector.length = length;
 					newVector.calculateSide();
+					newVector.isBad = isBadVector(vector);
 					max_right_upper_length = length;
 				}
 			} else {
 				ExpandVector& newVector = result[RIGHT_DOWN];
-				bool isBad = isBadVector(vector);
-				if ((newVector.isNull || (!isBad && newVector.isBad)) ||
-					(isBad == newVector.isBad && max_right_lower_length < length)) {
+				if (max_right_lower_length < length) {
 					newVector.set(vector);
 					newVector.length = length;
 					newVector.calculateSide();
-					newVector.isBad = isBad;
+					newVector.isBad = isBadVector(vector);
 					max_right_lower_length = length;
 				}
 			}
@@ -554,22 +550,11 @@ float calculateSteerAngle(ExpandVector& vector, float kfa, Pixy2& pixy) {
 	return vector.side * (kfa * transponireAngle(calculateAngle(vector)));
 }
 
-// float calculateSteerAngleForStraight(ExpandVector& vector, int count, Pixy2& pixy) {
-// 	float angle = 0;
-// 	if (count >= 2) {
-// 		angle = vector.side * -correction_angle;
-// 	} else if (count == 1) {
-// 		angle = vector.side * correction_angle;
-// 	}
-// 	return angle;
-// }
-
 float calculateSteerAngleForStraight(ExpandVector& vector, int count, Pixy2& pixy) {
 	float angle = (count == 2 ? -1 : 1);
-	int center = SCREEN_WIDTH / 2;
-	if (vector.down.x < center - 1) {
+	if (vector.down.x < HALF_SCREEN_WIDTH - 1) {
 		angle *= correction_angle;
-	} else if (vector.down.x > center + 1) {
+	} else if (vector.down.x > HALF_SCREEN_WIDTH + 1) {
 		angle *= -correction_angle;
 	} else if (count == 1) {
 		angle = vector.side * 90.0f;
@@ -605,7 +590,7 @@ void raceTrack(Pixy2 &pixy) {
 		ExpandVector average = vectors[0];
 		float angle = transponireAngle(calculateAngle(average));
 		float steerAngle;
-		if (isTurnAngle(angle) && count == 1) {
+		if (isTurnAngle(angle) && count == 1 && !average.isBad) {
 			steerAngle = calculateSteerAngle(average, kf_angle, pixy);
 			PX4_INFO("TURN: %f   %d", (double) steerAngle, count);
 			speed = turn_speed;
